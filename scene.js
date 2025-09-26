@@ -191,10 +191,16 @@ async function loadPortraits() {
 
 function placeMedallions(textures){
   const rings = [
-    { phi: 0.55, count: 4, radius: rotundaRadius - 0.2 },
-    { phi: 0.75, count: 8, radius: rotundaRadius - 0.2 }
+    { phi: 0.12, count: 6, radius: rotundaRadius - 0.2 },
+    { phi: 0.22, count: 10, radius: rotundaRadius - 0.2 }
   ];
   let ti = 0;
+  const topY = dome.position.y - rotundaRadius;
+  const center = new THREE.Mesh(new THREE.CircleGeometry(6.0, 96),
+    new THREE.MeshBasicMaterial({ map: textures[0], transparent: true }));
+  center.position.set(0, topY, 0);
+  center.lookAt(0, center.position.y - 1, 0);
+  medGroup.add(center);
   for (const ring of rings){
     for (let i=0;i<ring.count;i++){
       const theta = (i / ring.count) * Math.PI * 2;
@@ -202,7 +208,7 @@ function placeMedallions(textures){
       const x = r * Math.sin(phi) * Math.cos(theta);
       const y = dome.position.y - r * Math.cos(phi);
       const z = r * Math.sin(phi) * Math.sin(theta);
-      const mesh = new THREE.Mesh(new THREE.CircleGeometry(2.0, 64),
+      const mesh = new THREE.Mesh(new THREE.CircleGeometry(4.0, 64),
         new THREE.MeshBasicMaterial({ map: textures[ti % textures.length], transparent: true }));
       mesh.position.set(x,y,z);
       mesh.lookAt(0, y - 1, 0);
