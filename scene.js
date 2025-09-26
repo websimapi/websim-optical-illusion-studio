@@ -19,14 +19,14 @@ const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerH
 camera.position.set(0, 1.6, 10);
 
 /* -- ASSET MANAGEMENT -- */
-const textureLoader = new THREE.TextureLoader();
 const loadingManager = new THREE.LoadingManager();
+const textureLoader = new THREE.TextureLoader(loadingManager);
+
 loadingManager.onLoad = () => {
     setTimeout(() => {
         loadingOverlay.classList.add('hidden');
     }, 500);
 };
-const aiLoadingManager = new THREE.LoadingManager();
 
 function updateLoadingText(text) {
     loadingText.textContent = text;
@@ -77,11 +77,14 @@ async function buildScene() {
     ]);
 
     updateLoadingText("Loading library textures...");
-    const bookshelfTexture = await textureLoader.loadAsync(bookshelfResult.url, loadingManager);
+    const [bookshelfTexture, floorTexture] = await Promise.all([
+        textureLoader.loadAsync(bookshelfResult.url),
+        textureLoader.loadAsync(floorResult.url)
+    ]);
+    
     bookshelfTexture.wrapS = bookshelfTexture.wrapT = THREE.RepeatWrapping;
     bookshelfTexture.repeat.set(8, 2);
 
-    const floorTexture = await textureLoader.loadAsync(floorResult.url, loadingManager);
     floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
     floorTexture.repeat.set(12, 12);
     
@@ -123,7 +126,7 @@ async function generateAndPlacePortraits(dome) {
       "A majestic teal and magenta dragon, fiery background", "A beautiful queen with a silver crown, castle background"
     ];
 
-    const portraitTextures = await Promise.all(
+    const portraitImageResults = await Promise.all(
         subjects.map(s => {
             const prompt = `Fantasy portrait in a circular ornate gold frame, ${s}. Photorealistic, dramatic lighting, no text, centered.`;
             return websim.imageGen({ prompt, aspect_ratio: "1:1", transparent: true });
@@ -131,12 +134,13 @@ async function generateAndPlacePortraits(dome) {
     );
     
     updateLoadingText("Placing portraits on ceiling...");
-    const portraitMaterials = await Promise.all(
-        portraitTextures.map(r => new Promise(res => {
-            const tex = textureLoader.load(r.url, () => res(
-                new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
-            ), undefined, () => res(null));
-        }))
+    
+    const portraitTextures = await Promise.all(
+        portraitImageResults.map(r => textureLoader.loadAsync(r.url))
+    );
+
+    const portraitMaterials = portraitTextures.map(tex => 
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
     );
     
     // Center portrait
@@ -154,7 +158,7 @@ async function generateAndPlacePortraits(dome) {
         const x = Math.cos(angle) * ringRadius;
         const z = Math.sin(angle) * ringRadius;
         
-        const y = dome.position.y - Math.sqrt(dome.geometry.parameters.radius**2 - ringRadius**2) - 0.1;
+        const y = dome.position.y - Math.sqrt(dome.geometry.parameters.radius**2 - ringRadius**2) + 0.2;
 
         const geo = new THREE.CircleGeometry(4, 64);
         const mat = portraitMaterials[(i + 1) % portraitMaterials.length];
@@ -163,7 +167,7 @@ async function generateAndPlacePortraits(dome) {
         portrait.position.set(x, y, z);
         
         // Orient portrait to face center and tilt with ceiling
-        portrait.lookAt(new THREE.Vector3(0, dome.position.y, 0));
+        portrait.lookAt(new THREE.Vector3(x, dome.position.y + 10, z));
         
         scene.add(portrait);
     }
