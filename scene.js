@@ -110,7 +110,7 @@ for (let x = -12; x <= 12; x += 6) {
 
 /* Ceiling: shallow dome with fresco shader */
 const domeGeo = new THREE.SphereGeometry(rotundaRadius, 96, 48, 0, Math.PI * 2, 0, Math.PI / 2);
-const domeMat = new THREE.MeshStandardMaterial({ color: 0xd9cbb5, roughness: 0.9, metalness: 0.0 });
+const domeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0 });
 const dome = new THREE.Mesh(domeGeo, domeMat);
 dome.position.y = rotundaHeight - 0.4;
 scene.add(dome);
@@ -159,7 +159,7 @@ scene.add(medGroup);
 /* texture loader helper */
 async function loadPortraits() {
   aiBtn.disabled = true;
-  aiBtn.textContent = "Generating Portraits...";
+  aiBtn.textContent = "Generating Ceiling Mural...";
   try {
     medGroup.clear();
     const subjects = [
@@ -183,39 +183,77 @@ async function loadPortraits() {
       });
       textures.push(tex);
     }
-    placeMedallions(textures);
-  } catch (e) { console.error(e); alert("Portrait generation failed."); }
+    const fillers = [
+      "ornamental plaster filigree motif, subtle, circular, neutral beige tones, no portrait, no text",
+      "celestial starburst rosette, muted earth tones, circular, no portrait, no text",
+      "geometric mosaic medallion, subdued palette, circular, no portrait, no text",
+      "laurel wreath emblem, aged plaster, circular, no portrait, no text"
+    ];
+    const fillerTextures = [];
+    for (const f of fillers) {
+      const r = await websim.imageGen({ prompt: f, aspect_ratio: "1:1", transparent: true });
+      const tex = await new Promise((res, rej) => {
+        const img = new Image(); img.crossOrigin = "anonymous";
+        img.onload = () => { const t = new THREE.Texture(img); t.needsUpdate = true; res(t); };
+        img.onerror = rej; img.src = r.url;
+      });
+      fillerTextures.push(tex);
+    }
+    buildCeilingMural(textures, fillerTextures);
+  } catch (e) { console.error(e); alert("Mural generation failed."); }
   aiBtn.disabled = false;
-  aiBtn.textContent = "Generate Portraits";
+  aiBtn.textContent = "Generate Ceiling Mural";
 }
 
-function placeMedallions(textures){
-  const rings = [
-    { phi: 0.12, count: 6, radius: rotundaRadius - 0.2 },
-    { phi: 0.22, count: 10, radius: rotundaRadius - 0.2 }
+function buildCeilingMural(portraits, fillers){
+  const size = 2048;
+  const cvs = document.createElement('canvas'); cvs.width = size; cvs.height = size;
+  const ctx = cvs.getContext('2d');
+  ctx.fillStyle = "#d8c9b3"; ctx.fillRect(0,0,size,size);
+  const center = { x: size/2, y: size*0.28 };
+  const ringSpecs = [
+    { r: size*0.10, count: 1, rad: size*0.18 },
+    { r: size*0.14, count: 6, rad: size*0.35, tilt: 0.0 },
+    { r: size*0.12, count: 10, rad: size*0.55, tilt: 0.0 }
   ];
-  let ti = 0;
-  const topY = dome.position.y - rotundaRadius;
-  const center = new THREE.Mesh(new THREE.CircleGeometry(6.0, 96),
-    new THREE.MeshBasicMaterial({ map: textures[0], transparent: true }));
-  center.position.set(0, topY, 0);
-  center.lookAt(0, center.position.y - 1, 0);
-  medGroup.add(center);
-  for (const ring of rings){
-    for (let i=0;i<ring.count;i++){
-      const theta = (i / ring.count) * Math.PI * 2;
-      const r = ring.radius, phi = ring.phi;
-      const x = r * Math.sin(phi) * Math.cos(theta);
-      const y = dome.position.y - r * Math.cos(phi);
-      const z = r * Math.sin(phi) * Math.sin(theta);
-      const mesh = new THREE.Mesh(new THREE.CircleGeometry(4.0, 64),
-        new THREE.MeshBasicMaterial({ map: textures[ti % textures.length], transparent: true }));
-      mesh.position.set(x,y,z);
-      mesh.lookAt(0, y - 1, 0);
-      medGroup.add(mesh);
-      ti++;
+  let pi = 0;
+  function drawCircleImage(img, cx, cy, rad){
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI*2); ctx.clip();
+    ctx.drawImage(img, cx-rad, cy-rad, rad*2, rad*2);
+    ctx.restore();
+    ctx.strokeStyle = "rgba(212,177,92,0.85)"; ctx.lineWidth = Math.max(4, rad*0.08);
+    ctx.beginPath(); ctx.arc(cx, cy, rad*0.98, 0, Math.PI*2); ctx.stroke();
+  }
+  // portraits
+  for (const spec of ringSpecs){
+    const count = spec.count || 1;
+    for (let i=0;i<count;i++){
+      const ang = (i / count) * Math.PI*2 + (spec.tilt||0);
+      const cx = center.x + Math.cos(ang) * spec.rad;
+      const cy = center.y + Math.sin(ang) * spec.rad * 0.55;
+      const img = portraits[pi % portraits.length].image;
+      drawCircleImage(img, cx, cy, spec.r);
+      pi++;
     }
   }
+  // filler motifs in gaps
+  const fillerCount = 24;
+  for (let i=0;i<fillerCount;i++){
+    const a = Math.random() * Math.PI*2;
+    const d = size*0.25 + Math.random()*size*0.45;
+    const cx = center.x + Math.cos(a)*d;
+    const cy = center.y + Math.sin(a)*d*0.6;
+    const rad = size*(0.05 + Math.random()*0.06);
+    const img = fillers[i % fillers.length].image;
+    ctx.globalAlpha = 0.75;
+    drawCircleImage(img, cx, cy, rad);
+    ctx.globalAlpha = 1.0;
+  }
+  const muralTex = new THREE.CanvasTexture(cvs);
+  muralTex.anisotropy = 8; muralTex.needsUpdate = true;
+  domeMat.map = muralTex; domeMat.needsUpdate = true;
+  floorUniforms.u_tex.value = muralTex;
 }
 
 /* Expose button to regenerate fresco */
