@@ -97,60 +97,20 @@ const walls = new THREE.Mesh(wallGeo, wallMat);
 walls.position.y = rotundaHeight / 2 - 0.01;
 scene.add(walls);
 
+/* Tall bookshelf rows (cannot see over) */
+const shelfMat = new THREE.MeshStandardMaterial({ color: 0x4a3f32, roughness: 0.85 });
+for (let x = -12; x <= 12; x += 6) {
+  for (let z = -18; z <= 18; z += 12) {
+    const geo = new THREE.BoxGeometry(14, 3.2, 1.2);
+    const shelf = new THREE.Mesh(geo, shelfMat);
+    shelf.position.set(x, 1.6, z);
+    if (Math.hypot(shelf.position.x, shelf.position.z) < rotundaRadius - 2.0) scene.add(shelf);
+  }
+}
+
 /* Ceiling: shallow dome with fresco shader */
 const domeGeo = new THREE.SphereGeometry(rotundaRadius, 96, 48, 0, Math.PI * 2, 0, Math.PI / 2);
-const domeUniforms = {
-  u_time: { value: 0 },
-  u_churn: { value: 0 },
-  u_tex: { value: new THREE.Texture() }
-};
-const domeMat = new THREE.ShaderMaterial({
-  side: THREE.BackSide,
-  uniforms: domeUniforms,
-  vertexShader: `
-    varying vec2 v_uv;
-    varying vec3 v_world;
-    void main(){
-      v_uv = uv;
-      vec4 wpos = modelMatrix * vec4(position,1.0);
-      v_world = wpos.xyz;
-      gl_Position = projectionMatrix * (viewMatrix * wpos);
-    }
-  `,
-  fragmentShader: `
-    precision mediump float;
-    varying vec2 v_uv;
-    uniform float u_time;
-    uniform float u_churn;
-    uniform sampler2D u_tex;
-
-    vec2 swirl(vec2 uv, float k){
-      vec2 c = uv - 0.5;
-      float r = length(c);
-      float a = k * r;
-      float s = sin(a), c0 = cos(a);
-      c = mat2(c0, -s, s, c0) * c;
-      return c + 0.5;
-    }
-
-    void main(){
-      vec2 uv = v_uv;
-      // subtle churn based on u_churn
-      float k = u_churn * (0.5 + 0.5*sin(u_time*0.6));
-      uv = swirl(uv, 3.14159 * k);
-      uv.x += 0.03 * u_churn * sin(uv.y*24.0 + u_time*0.8);
-      uv.y += 0.03 * u_churn * cos(uv.x*24.0 + u_time*0.7);
-
-      vec3 fresco = texture2D(u_tex, clamp(uv, 0.0, 1.0)).rgb;
-
-      // gilded rim glow near edges
-      float rim = smoothstep(0.85, 0.95, uv.y);
-      fresco += rim * vec3(1.0, 0.9, 0.6) * 0.12;
-
-      gl_FragColor = vec4(fresco, 1.0);
-    }
-  `
-});
+const domeMat = new THREE.MeshStandardMaterial({ color: 0xd9cbb5, roughness: 0.9, metalness: 0.0 });
 const dome = new THREE.Mesh(domeGeo, domeMat);
 dome.position.y = rotundaHeight - 0.4;
 scene.add(dome);
@@ -193,56 +153,70 @@ joy.on('end', () => { joyVec.x = 0; joyVec.y = 0; });
 /* AI: Generate ceiling fresco using provided prompt */
 const frescoPrompt = `Ceiling fresco composed only of circular portrait medallions, clean aged plaster background, no books, no shelves, no library interior, no paint streaks, no dripping. Each medallion has a luminous gold rim framing a centered portrait: wizard (white beard), knight (crimson and emerald), dragon (teal and magenta), jewel-bright accents against muted earth tones. Symmetrical tileable layout of medallions across the ceiling, seamless texture, high-resolution, Free Flux Schnell style, photoreal fresco. Avoid text, lettering, architectural details, and any streaking or melting effects.`;
 
+const medGroup = new THREE.Group();
+scene.add(medGroup);
+
 /* texture loader helper */
-async function loadFresco() {
+async function loadPortraits() {
   aiBtn.disabled = true;
-  aiBtn.textContent = "Generating Fresco...";
+  aiBtn.textContent = "Generating Portraits...";
   try {
-    const result = await websim.imageGen({
-      prompt: frescoPrompt,
-      aspect_ratio: "3:2"
-    });
-    if (!result?.url) throw new Error("No URL");
-    const tex = await new Promise((res, rej) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        const t = new THREE.Texture(img);
-        t.flipY = false;
-        t.needsUpdate = true;
-        res(t);
-      };
-      img.onerror = rej;
-      img.src = result.url;
-    });
-    domeUniforms.u_tex.value = tex;
-    floorUniforms.u_tex.value = tex;
-  } catch (e) {
-    console.error(e);
-    alert("AI fresco generation failed.");
-  } finally {
-    aiBtn.disabled = false;
-    aiBtn.textContent = "AI Alter";
+    medGroup.clear();
+    const subjects = [
+      "circular gold-rim portrait, wizard with white beard, centered, neutral plaster background, no text, no extra elements, high detail",
+      "circular gold-rim portrait, valiant knight in crimson and emerald, centered, neutral plaster background, no text",
+      "circular gold-rim portrait, dragon teal and magenta, centered, neutral plaster background, no text",
+      "circular gold-rim portrait, queen in muted earth tones with jewel accents, centered, neutral plaster background, no text",
+      "circular gold-rim portrait, scholar with spectacles, centered, neutral plaster background, no text",
+      "circular gold-rim portrait, archer in forest hues, centered, neutral plaster background, no text",
+      "circular gold-rim portrait, mystic with hood, centered, neutral plaster background, no text",
+      "circular gold-rim portrait, bard with lute, centered, neutral plaster background, no text"
+    ];
+    const textures = [];
+    for (const s of subjects) {
+      const r = await websim.imageGen({ prompt: s, aspect_ratio: "1:1", transparent: true });
+      const tex = await new Promise((res, rej) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => { const t = new THREE.Texture(img); t.needsUpdate = true; res(t); };
+        img.onerror = rej; img.src = r.url;
+      });
+      textures.push(tex);
+    }
+    placeMedallions(textures);
+  } catch (e) { console.error(e); alert("Portrait generation failed."); }
+  aiBtn.disabled = false;
+  aiBtn.textContent = "Generate Portraits";
+}
+
+function placeMedallions(textures){
+  const rings = [
+    { phi: 0.55, count: 4, radius: rotundaRadius - 0.2 },
+    { phi: 0.75, count: 8, radius: rotundaRadius - 0.2 }
+  ];
+  let ti = 0;
+  for (const ring of rings){
+    for (let i=0;i<ring.count;i++){
+      const theta = (i / ring.count) * Math.PI * 2;
+      const r = ring.radius, phi = ring.phi;
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = dome.position.y - r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      const mesh = new THREE.Mesh(new THREE.CircleGeometry(2.0, 64),
+        new THREE.MeshBasicMaterial({ map: textures[ti % textures.length], transparent: true }));
+      mesh.position.set(x,y,z);
+      mesh.lookAt(0, y - 1, 0);
+      medGroup.add(mesh);
+      ti++;
+    }
   }
 }
 
 /* Expose button to regenerate fresco */
-aiBtn.addEventListener("click", loadFresco);
+aiBtn.addEventListener("click", loadPortraits);
 
 /* Initial generate */
-loadFresco();
-
-/* Center-lookup detection to trigger churn/drip */
-function updateChurnAndDrip(dt){
-  const pos = camera.position;
-  const inCenter = Math.hypot(pos.x, pos.z) < 3.0;
-  const lookingUp = pitch < -Math.PI*0.25; // looking up
-  const target = (inCenter && lookingUp) ? 1.0 : 0.0;
-
-  // ease
-  domeUniforms.u_churn.value += (target - domeUniforms.u_churn.value) * Math.min(1, dt*2.0);
-  floorUniforms.u_drip.value += (target - floorUniforms.u_drip.value) * Math.min(1, dt*1.2);
-}
+loadPortraits();
 
 /* Animation loop */
 let last = performance.now();
@@ -273,10 +247,7 @@ function animate(now){
 
   // uniforms
   const t = now * 0.001;
-  domeUniforms.u_time.value = t;
   floorUniforms.u_time.value = t;
-
-  updateChurnAndDrip(dt);
 
   // resize
   const w = canvas.clientWidth, h = canvas.clientHeight;
