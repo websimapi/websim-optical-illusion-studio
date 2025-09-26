@@ -1,6 +1,62 @@
 import * as THREE from "three";
 import nipplejs from "nipplejs";
 
+/* -- SHADERS -- */
+const vsSource = `
+varying vec2 v_uv;
+void main() {
+    v_uv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const fsSource = `
+precision mediump float;
+uniform sampler2D u_texture;
+uniform float u_time;
+uniform float u_drip_intensity;
+varying vec2 v_uv;
+
+// Simple pseudo-random noise
+float hash(float n) { return fract(sin(n) * 43758.5453); }
+float noise(vec2 x) {
+    vec2 p = floor(x);
+    vec2 f = fract(x);
+    f = f*f*(3.0-2.0*f);
+    float n = p.x + p.y*57.0;
+    return mix(mix( hash(n+0.0), hash(n+1.0),f.x),
+               mix( hash(n+57.0), hash(n+58.0),f.x),f.y);
+}
+
+void main() {
+    vec2 uv = v_uv;
+    vec2 center_uv = uv - 0.5;
+
+    // Only apply effect if intensity is > 0
+    if (u_drip_intensity > 0.0) {
+        float drip_strength = smoothstep(0.0, 0.4, center_uv.y + 0.5);
+        float drip_noise = noise(vec2(uv.x * 12.0, u_time * 0.1));
+        float drip_offset = pow(drip_noise, 2.0) * u_drip_intensity * drip_strength * 0.3;
+        
+        float wave_offset = sin(uv.x * 25.0 + u_time * 1.5) * 0.015 * u_drip_intensity * drip_strength;
+        
+        uv.y -= drip_offset + wave_offset;
+    }
+    
+    vec4 color = texture2D(u_texture, uv);
+
+    // Fade edges to make it look more circular and blend better
+    float edge_fade = 1.0 - smoothstep(0.45, 0.5, length(center_uv));
+    
+    if (edge_fade < 0.01) {
+      discard;
+    }
+
+    gl_FragColor = vec4(color.rgb, color.a * edge_fade);
+}
+`;
+
+
 /* -- DOM & CORE -- */
 const canvas = document.getElementById("scene");
 const loadingOverlay = document.getElementById('loading-overlay');
@@ -56,6 +112,11 @@ const joy = nipplejs.create({
 let joyVec = { x: 0, y: 0 };
 joy.on('move', (_, data) => { joyVec = data.vector || { x:0, y:0 }; });
 joy.on('end', () => { joyVec = { x: 0, y: 0 }; });
+
+
+/* -- SCENE STATE -- */
+const ceilingMaterials = [];
+let dripIntensity = 0.0;
 
 
 /* -- SCENE BUILDING -- */
@@ -139,13 +200,25 @@ async function generateAndPlacePortraits(dome) {
         portraitImageResults.map(r => textureLoader.loadAsync(r.url))
     );
 
-    const portraitMaterials = portraitTextures.map(tex => 
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
-    );
+    portraitTextures.forEach(tex => {
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                u_time: { value: 0.0 },
+                u_texture: { value: tex },
+                u_drip_intensity: { value: 0.0 }
+            },
+            vertexShader: vsSource,
+            fragmentShader: fsSource,
+            transparent: true,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        ceilingMaterials.push(material);
+    });
     
     // Center portrait
     const centerGeo = new THREE.CircleGeometry(5, 64);
-    const centerPortrait = new THREE.Mesh(centerGeo, portraitMaterials[0]);
+    const centerPortrait = new THREE.Mesh(centerGeo, ceilingMaterials[0]);
     centerPortrait.position.set(0, dome.position.y - 0.1, 0);
     centerPortrait.rotation.x = -Math.PI / 2;
     scene.add(centerPortrait);
@@ -161,7 +234,7 @@ async function generateAndPlacePortraits(dome) {
         const y = dome.position.y - Math.sqrt(dome.geometry.parameters.radius**2 - ringRadius**2) + 0.2;
 
         const geo = new THREE.CircleGeometry(4, 64);
-        const mat = portraitMaterials[(i + 1) % portraitMaterials.length];
+        const mat = ceilingMaterials[(i + 1) % ceilingMaterials.length];
         const portrait = new THREE.Mesh(geo, mat);
         
         portrait.position.set(x, y, z);
@@ -179,6 +252,20 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+
+  // Trigger drip effect when looking up
+  const lookUpThreshold = -1.0; // Radians
+  if (pitch < lookUpThreshold) {
+      dripIntensity = Math.min(1.0, dripIntensity + dt * 0.4);
+  } else {
+      dripIntensity = Math.max(0.0, dripIntensity - dt * 0.5);
+  }
+
+  // Update ceiling shader uniforms
+  ceilingMaterials.forEach(mat => {
+      mat.uniforms.u_time.value = now * 0.001;
+      mat.uniforms.u_drip_intensity.value = dripIntensity;
+  });
 
   // Movement
   const forward = (keys["KeyW"] ? 1:0) - (keys["KeyS"] ? 1:0) - joyVec.y;
